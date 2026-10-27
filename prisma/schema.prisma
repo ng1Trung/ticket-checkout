@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SELLER
+  BUYER
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+}
+
+enum TransactionType {
+  PAYMENT_ESCROW
+  ESCROW_RELEASE
+  ADJUSTMENT
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+model User {
+  id             String          @id @default(cuid())
+  name           String
+  email          String          @unique
+  role           Role            @default(BUYER)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  listings       Listing[]
+  orders         Order[]
+  ledgerAccounts LedgerAccount[]
+}
+
+model Event {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  eventDate   DateTime
+  location    String
+  imageUrl    String?
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  listings    Listing[]
+  orders      Order[]
+}
+
+model Listing {
+  id                String   @id @default(cuid())
+  eventId           String
+  sellerId          String
+  section           String?
+  totalQuantity     Int
+  availableQuantity Int
+  pricePerTicketVnd Int // Integer in VND
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  event             Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  seller            User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  orders            Order[]
+}
+
+model Order {
+  id                 String              @id @default(cuid())
+  orderCode          BigInt              @unique // Unique integer for PayOS payment link
+  eventId            String
+  listingId          String
+  buyerId            String
+  quantity           Int
+  unitPrice          Int                 // Base ticket price
+  subtotal           Int                 // unitPrice * quantity
+  buyerFee           Int                 // 10% service fee paid by buyer
+  sellerFee          Int                 // 5% commission fee deducted from seller
+  totalAmount        Int                 // subtotal + buyerFee (Amount paid by buyer)
+  sellerReceives     Int                 // subtotal - sellerFee (Amount seller gets in escrow)
+  platformKeeps      Int                 // buyerFee + sellerFee (Platform total revenue)
+  status             OrderStatus         @default(PENDING)
+  expiresAt          DateTime            // Ticket hold expires after TTL (10 mins)
+  paymentLinkId      String?
+  paymentUrl         String?
+  paidAt             DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  event              Event               @relation(fields: [eventId], references: [id])
+  listing            Listing             @relation(fields: [listingId], references: [id])
+  buyer              User                @relation(fields: [buyerId], references: [id])
+  ledgerTransactions LedgerTransaction[]
+}
+
+model LedgerAccount {
+  id        String        @id @default(cuid())
+  code      String        @unique // e.g. GATEWAY_RECEIVABLE, PLATFORM_FEE_REVENUE, SELLER_ESCROW_PENDING_<userId>, SELLER_AVAILABLE_<userId>
+  name      String
+  type      AccountType
+  userId    String?
+  createdAt DateTime      @default(now())
+
+  user      User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries   LedgerEntry[]
+}
+
+model LedgerTransaction {
+  id          String          @id @default(cuid())
+  orderId     String?
+  eventId     String?
+  type        TransactionType
+  description String
+  createdAt   DateTime        @default(now())
+
+  order       Order?          @relation(fields: [orderId], references: [id])
+  entries     LedgerEntry[]
+}
+
+model LedgerEntry {
+  id            String            @id @default(cuid())
+  transactionId String
+  accountId     String
+  amount        Int               // Positive integer in VND
+  entryType     EntryType         // DEBIT or CREDIT
+  createdAt     DateTime          @default(now())
+
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([transactionId])
+}
